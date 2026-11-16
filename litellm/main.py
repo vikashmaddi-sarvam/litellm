@@ -2821,10 +2821,19 @@ def _complete_custom_openai(
     )
 
     headers = headers or litellm.headers
-    outbound_headers: Final = (
+    json_user_agent: Final = (
+        JSONProviderRegistry.get_user_agent(custom_llm_provider) if provider_config is None else None
+    )
+    base_headers: Final = (
         headers
         if provider_config is None
         else with_attribution_headers(provider_config.get_attribution_headers(), headers)
+    )
+    # A JSON provider may declare a User-Agent in providers.json. It is always
+    # enforced, matching the LiveKit and Pipecat Sarvam integrations, which
+    # override any caller-supplied value.
+    outbound_headers: Final = (
+        {**(base_headers or {}), "User-Agent": json_user_agent} if json_user_agent is not None else base_headers
     )
 
     # Add GitHub Copilot headers (same as /responses endpoint does)

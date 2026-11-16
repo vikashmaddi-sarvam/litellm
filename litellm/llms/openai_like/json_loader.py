@@ -3,6 +3,7 @@ JSON-based provider configuration loader for OpenAI-compatible providers.
 """
 
 import json
+import platform
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final
@@ -12,9 +13,16 @@ from pydantic import TypeAdapter
 from litellm._logging import verbose_logger
 from litellm.types.utils import ProviderSpecificModelInfo
 
+try:
+    from litellm._version import version as _LITELLM_VERSION
+except Exception:
+    _LITELLM_VERSION: Final = "0.0.0"
+
 _PROVIDER_INFO_ADAPTER: Final = TypeAdapter(ProviderSpecificModelInfo)
 _SPECIAL_HANDLING_ADAPTER: Final = TypeAdapter(Mapping[str, bool])
 _MODEL_ENDPOINTS_ADAPTER: Final = TypeAdapter(Mapping[str, tuple[str, ...]])
+_VERSION_PLACEHOLDER: Final = "{version}"
+_PYTHON_PLACEHOLDER: Final = "{python}"
 
 
 class SimpleProviderConfig:
@@ -35,6 +43,7 @@ class SimpleProviderConfig:
         self.model_supported_endpoints: Mapping[str, tuple[str, ...]] = _MODEL_ENDPOINTS_ADAPTER.validate_python(
             data.get("model_supported_endpoints", {})
         )
+        self.user_agent: str | None = data.get("user_agent")
         self.provider_info: ProviderSpecificModelInfo = (
             _PROVIDER_INFO_ADAPTER.validate_python(data["provider_info"]) if "provider_info" in data else {}
         )
@@ -85,6 +94,21 @@ class JSONProviderRegistry:
     def get_by_base_url(cls, base_url: str) -> SimpleProviderConfig | None:
         """Get a provider configuration by its default base url"""
         return next((provider for provider in cls._providers.values() if provider.base_url == base_url), None)
+
+    @classmethod
+    def get_user_agent(cls, slug: str) -> str | None:
+        """Get the User-Agent a JSON provider sends to identify LiteLLM.
+
+        Mirrors the LiveKit and Pipecat Sarvam integrations, which send
+        `<product>/<version> Python/<python-version>` on every request. A
+        configured value may contain `{version}` and `{python}`.
+        """
+        provider: Final = cls._providers.get(slug)
+        if provider is None or not provider.user_agent:
+            return None
+        return provider.user_agent.replace(_VERSION_PLACEHOLDER, _LITELLM_VERSION).replace(
+            _PYTHON_PLACEHOLDER, platform.python_version()
+        )
 
     @classmethod
     def supports_responses_api(cls, slug: str) -> bool:

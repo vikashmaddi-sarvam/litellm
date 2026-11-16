@@ -3,6 +3,7 @@ Tests for the Sarvam provider configuration and cost map entries.
 """
 
 import json
+import platform
 from pathlib import Path
 from typing import Final
 
@@ -10,6 +11,7 @@ import pytest
 import respx
 
 import litellm
+from litellm.llms.openai_like.json_loader import _LITELLM_VERSION
 
 SARVAM_MODELS: Final = (
     "sarvam/sarvam-105b",
@@ -86,6 +88,47 @@ def test_sarvam_chat_completion_request() -> None:
     # LiteLLM maps max_completion_tokens to max_tokens for OpenAI-compatible providers.
     assert body.get("max_completion_tokens", body.get("max_tokens")) == 200
     assert response.choices[0].message.content == "Hello"
+
+
+def test_sarvam_chat_completion_sends_the_litellm_user_agent() -> None:
+    """Mirrors the LiveKit and Pipecat Sarvam integrations: every request carries
+    `<product>/<version> Python/<python-version>`, and it is always enforced."""
+    with respx.mock() as upstream:
+        route: Final = upstream.post("https://api.sarvam.ai/v2/chat/completions").respond(
+            200,
+            json={
+                "id": "chatcmpl_sarvam_user_agent",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "sarvam-105b",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hello"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7},
+            },
+        )
+        litellm.completion(
+            model="sarvam/sarvam-105b",
+            messages=[{"role": "user", "content": "Say hello"}],
+            api_key="sarvam-test-key",
+        )
+        litellm.completion(
+            model="sarvam/sarvam-105b",
+            messages=[{"role": "user", "content": "Say hello"}],
+            api_key="sarvam-test-key",
+            extra_headers={"User-Agent": "caller-app/1.0"},
+        )
+
+    default_request: Final = route.calls[0].request
+    caller_request: Final = route.calls[1].request
+    expected: Final = f"litellm/{_LITELLM_VERSION} Python/{platform.python_version()}"
+    assert default_request.headers["user-agent"] == expected
+    # Always enforced, as LiveKit and Pipecat do.
+    assert caller_request.headers["user-agent"] == expected
 
 
 def test_sarvam_responses_request() -> None:
